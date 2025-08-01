@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard - Terminal Hosting</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background-color: #1a1a1a;
+            color: #00ff00;
+            margin: 0;
+            padding: 0;
+        }
+        .header {
+            background-color: #2d2d2d;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 0 10px rgba(0, 255, 0, 0.3);
+        }
+        .container {
+            padding: 2rem;
+        }
+        .btn {
+            display: inline-block;
+            padding: 0.5rem 1rem;
+            margin: 0.5rem;
+            background-color: #1a1a1a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background-color: #00ff00;
+            color: #1a1a1a;
+        }
+        .terminal-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1rem;
+            margin-top: 2rem;
+        }
+        .terminal-card {
+            background-color: #2d2d2d;
+            padding: 1rem;
+            border-radius: 5px;
+            box-shadow: 0 0 5px rgba(0, 255, 0, 0.3);
+        }
+        .terminal-actions {
+            margin-top: 1rem;
+        }
+        .status {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 5px;
+        }
+        .status-running {
+            background-color: #00ff00;
+        }
+        .status-stopped {
+            background-color: #ff0000;
+        }
+        .status-killed {
+            background-color: #ff9900;
+        }
+        .add-terminal-form {
+            margin-top: 2rem;
+            display: flex;
+            gap: 1rem;
+        }
+        .add-terminal-form input {
+            padding: 0.5rem;
+            background-color: #1a1a1a;
+            color: #00ff00;
+            border: 1px solid #00ff00;
+            border-radius: 3px;
+            flex-grow: 1;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Terminal Hosting - Dashboard</h1>
+        <div>
+            <span>Welcome, {{ username }}</span>
+            <a href="/logout" class="btn">Logout</a>
+        </div>
+    </div>
+    <div class="container">
+        <h2>Your Terminals</h2>
+        
+        <form class="add-terminal-form" method="POST" action="/add_terminal">
+            <input type="text" name="terminal_name" placeholder="New terminal name" required>
+            <button type="submit" class="btn">Add Terminal</button>
+        </form>
+        
+        <div class="terminal-list">
+            {% for terminal in terminals %}
+            <div class="terminal-card">
+                <h3>{{ terminal.name }}</h3>
+                <p>
+                    <span class="status status-{{ terminal.status }}"></span>
+                    Status: {{ terminal.status }}
+                </p>
+                <div class="terminal-actions">
+                    <a href="/terminal/{{ terminal.id }}" class="btn">Open Terminal</a>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</body>
+</html>
