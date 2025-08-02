@@ -13,6 +13,8 @@
         .buttons { margin: 10px 0; }
         button { padding: 10px; margin-right: 10px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
         button:hover { background: #0056b3; }
+        .delete-btn { background: #dc3545; }
+        .delete-btn:hover { background: #c82333; }
     </style>
 </head>
 <body>
@@ -22,12 +24,15 @@
             <button onclick="terminalAction('start')">Start</button>
             <button onclick="terminalAction('stop')">Stop</button>
             <button onclick="terminalAction('kill')">Kill</button>
+            <button class="delete-btn" onclick="deleteTerminal()">Delete</button>
         </div>
         <div class="terminal-window" id="terminal-output"></div>
         <input type="text" class="terminal-input" id="command-input" placeholder="Enter command..." onkeypress="if(event.key === 'Enter') executeCommand()">
     </div>
     <script>
         const renderString = "{{ terminal.render_string }}";
+        const outputDiv = document.getElementById("terminal-output");
+
         async function terminalAction(action) {
             const response = await fetch(`/terminal_action/${renderString}`, {
                 method: "POST",
@@ -35,17 +40,39 @@
                 body: JSON.stringify({ action })
             });
             const result = await response.json();
+            if (result.message) {
+                outputDiv.innerHTML += `<p>${result.message}</p>`;
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+            }
             if (result.status) {
-                location.reload();
+                if (result.status === "killed") {
+                    window.location.href = "/dashboard";
+                } else {
+                    location.reload();
+                }
             } else {
                 alert(result.error || "Action failed");
+            }
+        }
+
+        async function deleteTerminal() {
+            if (confirm("Are you sure you want to delete this terminal?")) {
+                const response = await fetch(`/delete_terminal/${renderString}`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" }
+                });
+                const result = await response.json();
+                outputDiv.innerHTML += `<p>${result.message || result.error}</p>`;
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+                if (result.message) {
+                    setTimeout(() => window.location.href = "/dashboard", 1000);
+                }
             }
         }
 
         async function executeCommand() {
             const input = document.getElementById("command-input");
             const command = input.value;
-            const outputDiv = document.getElementById("terminal-output");
             outputDiv.innerHTML += `<p>> ${command}</p>`;
             const response = await fetch(`/execute_command/${renderString}`, {
                 method: "POST",
