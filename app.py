@@ -1,182 +1,132 @@
-# app.py
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
-from flask_pymongo import PyMongo
-from werkzeug.security import generate_password_hash, check_password_hash
+from pymongo import MongoClient
+import subprocess
 import os
 import uuid
-import subprocess
-import threading
+import bcrypt
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# MongoDB configuration
-app.config["MONGO_URI"] = "mongodb+srv://TEAM-AKIRU:TEAM-AKIRU@team-akiru.iof0m6r.mongodb.net/terminal_hosting?retryWrites=true&w=majority"
-mongo = PyMongo(app)
+# MongoDB connection
+client = MongoClient("mongodb+srv://TEAM-AKIRU:TEAM-AKIRU@team-akiru.iof0m6r.mongodb.net/?retryWrites=true&w=majority&appName=TEAM-AKIRU")
+db = client["terminal_website"]
+users_collection = db["users"]
+terminals_collection = db["terminals"]
 
-# Store active terminals
-active_terminals = {}
+# Helper function to check if user is logged in
+def is_authenticated():
+    return "user_id" in session
 
-@app.route('/')
-def home():
-    if 'username' in session:
-        return redirect(url_for('dashboard'))
-    return render_template('index.html')
+@app.route("/")
+def index():
+    if is_authenticated():
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("login"))
 
-@app.route('/login', methods=['GET', 'POST'])
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        user = mongo.db.users.find_one({'username': username})
-        if user and check_password_hash(user['password'], password):
-            session['username'] = username
-            session['user_id'] = str(user['_id'])
-            return redirect(url_for('dashboard'))
-        
-        return render_template('login.html', error='Invalid username or password')
-    return render_template('login.html')
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"].encode("utf-8")
+        user = users_collection.find_one({"username": username})
+        if user and bcrypt.checkpw(password, user["password"]):
+            session["user_id"] = str(user["_id"])
+            return redirect(url_for("dashboard"))
+        return render_template("login.html", error="Invalid credentials")
+    return render_template("login.html")
 
-@app.route('/signup', methods=['GET', 'POST'])
+@app.route("/signup", methods=["POST"])
 def signup():
-    if request.method == 'POST':
-        username = request.form['username']
-        password = request.form['password']
-        
-        if mongo.db.users.find_one({'username': username}):
-            return render_template('signup.html', error='Username already exists')
-        
-        hashed_password = generate_password_hash(password)
-        mongo.db.users.insert_one({
-            'username': username,
-            'password': hashed_password,
-            'terminals': []
-        })
-        
-        return redirect(url_for('login'))
-    return render_template('signup.html')
+    username = request.form["username"]
+    password = request.form["password"].encode("utf-8")
+    if users_collection.find_one({"username": username}):
+        return render_template("login.html", error="Username already exists")
+    hashed = bcrypt.hashpw(password, bcrypt.gensalt())
+    user_id = users_collection.insert_one({"username": username, "password": hashed}).inserted_id
+    session["user_id"] = str(user_id)
+    return redirect(url_for("dashboard"))
 
-@app.route('/dashboard')
+@app.route("/dashboard")
 def dashboard():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    user = mongo.db.users.find_one({'_id': session['user_id']})
-    terminals = user.get('terminals', [])
-    return render_template('dashboard.html', username=session['username'], terminals=terminals)
+    if not is_authenticated():
+        return redirect(url_for("login"))
+    user_id = session["user_id"]
+    terminals = terminals_collection.find({"user_id": user_id})
+    return render_template("dashboard.html", terminals=terminals)
 
-@app.route('/add_terminal', methods=['POST'])
-def add_terminal():
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    terminal_name = request.form.get('terminal_name')
-    if not terminal_name:
-        return redirect(url_for('dashboard'))
-    
-    terminal_id = str(uuid.uuid4())
-    mongo.db.users.update_one(
-        {'_id': session['user_id']},
-        {'$push': {'terminals': {
-            'id': terminal_id,
-            'name': terminal_name,
-            'status': 'stopped',
-            'repo_url': '',
-            'pid': None
-        }}}
-    )
-    
-    return redirect(url_for('dashboard'))
+@app.route("/create_terminal", methods=["POST"])
+def create_terminal():
+    if not is_authenticated():
+        return redirect(url_for("login"))
+    terminal_name = request.form["terminal_name"]
+    repo_url = request.form.get("repo_url", "")
+    render_string = str(uuid.uuid4())[:8]
+    user_id = session["user_id"]
+    terminals_collection.insert_one({
+        "user_id": user_id,
+        "name": terminal_name,
+        "render_string": render_string,
+        "status": "stopped",
+        "repo_url": repo_url
+    })
+    return redirect(url_for("dashboard"))
 
-@app.route('/terminal/<terminal_id>')
-def terminal(terminal_id):
-    if 'username' not in session:
-        return redirect(url_for('login'))
-    
-    user = mongo.db.users.find_one({'_id': session['user_id']})
-    terminal = next((t for t in user['terminals'] if t['id'] == terminal_id), None)
-    
+@app.route("/terminal/<render_string>")
+def terminal(render_string):
+    if not is_authenticated():
+        return redirect(url_for("login"))
+    terminal = terminals_collection.find_one({"render_string": render_string, "user_id": session["user_id"]})
     if not terminal:
-        return redirect(url_for('dashboard'))
-    
-    return render_template('terminal.html', terminal=terminal)
+        return "Terminal not found", 404
+    return render_template("terminal.html", terminal=terminal)
 
-@app.route('/terminal_action', methods=['POST'])
-def terminal_action():
-    if 'username' not in session:
-        return jsonify({'status': 'error', 'message': 'Not logged in'}), 401
-    
-    terminal_id = request.form.get('terminal_id')
-    action = request.form.get('action')
-    repo_url = request.form.get('repo_url', '')
-    
-    user = mongo.db.users.find_one({'_id': session['user_id']})
-    terminal = next((t for t in user['terminals'] if t['id'] == terminal_id), None)
-    
+@app.route("/terminal_action/<render_string>", methods=["POST"])
+def terminal_action(render_string):
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    terminal = terminals_collection.find_one({"render_string": render_string, "user_id": session["user_id"]})
     if not terminal:
-        return jsonify({'status': 'error', 'message': 'Terminal not found'}), 404
+        return jsonify({"error": "Terminal not found"}), 404
+    action = request.json["action"]
+    terminal_path = f"/tmp/terminals/{render_string}"
     
-    if action == 'start':
-        # Clone repo if provided
-        if repo_url:
-            terminal_dir = f"terminals/{terminal_id}"
-            os.makedirs(terminal_dir, exist_ok=True)
-            subprocess.run(['git', 'clone', repo_url, terminal_dir], check=True)
-        
-        # Start the terminal process
-        process = subprocess.Popen(
-            ['python', '-m', 'http.server', '0'],
-            cwd=f"terminals/{terminal_id}",
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        
-        # Update terminal status
-        mongo.db.users.update_one(
-            {'_id': session['user_id'], 'terminals.id': terminal_id},
-            {'$set': {
-                'terminals.$.status': 'running',
-                'terminals.$.pid': process.pid,
-                'terminals.$.repo_url': repo_url
-            }}
-        )
-        
-        active_terminals[terminal_id] = process
-        return jsonify({'status': 'success', 'message': 'Terminal started'})
-    
-    elif action == 'stop':
-        process = active_terminals.get(terminal_id)
-        if process:
-            process.terminate()
-            del active_terminals[terminal_id]
-        
-        mongo.db.users.update_one(
-            {'_id': session['user_id'], 'terminals.id': terminal_id},
-            {'$set': {'terminals.$.status': 'stopped', 'terminals.$.pid': None}}
-        )
-        return jsonify({'status': 'success', 'message': 'Terminal stopped'})
-    
-    elif action == 'kill':
-        process = active_terminals.get(terminal_id)
-        if process:
-            process.kill()
-            del active_terminals[terminal_id]
-        
-        mongo.db.users.update_one(
-            {'_id': session['user_id'], 'terminals.id': terminal_id},
-            {'$set': {'terminals.$.status': 'killed', 'terminals.$.pid': None}}
-        )
-        return jsonify({'status': 'success', 'message': 'Terminal killed'})
-    
-    return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
+    if action == "start":
+        if not os.path.exists(terminal_path):
+            os.makedirs(terminal_path)
+            if terminal["repo_url"]:
+                subprocess.run(["git", "clone", terminal["repo_url"], terminal_path])
+        # Example: Start a process (e.g., Node.js bot)
+        subprocess.run(["bash", "-c", f"cd {terminal_path} && npm install && npm start &"], check=False)
+        terminals_collection.update_one({"render_string": render_string}, {"$set": {"status": "running"}})
+        return jsonify({"status": "running"})
+    elif action == "stop":
+        # Example: Stop process (simplified, use actual process management)
+        subprocess.run(["pkill", "-f", f"npm start.*{render_string}"], check=False)
+        terminals_collection.update_one({"render_string": render_string}, {"$set": {"status": "stopped"}})
+        return jsonify({"status": "stopped"})
+    elif action == "kill":
+        subprocess.run(["pkill", "-f", f"npm start.*{render_string}"], check=False)
+        if os.path.exists(terminal_path):
+            subprocess.run(["rm", "-rf", terminal_path])
+        terminals_collection.delete_one({"render_string": render_string})
+        return jsonify({"status": "killed"})
+    return jsonify({"error": "Invalid action"}), 400
 
-@app.route('/logout')
-def logout():
-    session.pop('username', None)
-    session.pop('user_id', None)
-    return redirect(url_for('home'))
+@app.route("/execute_command/<render_string>", methods=["POST"])
+def execute_command(render_string):
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    terminal = terminals_collection.find_one({"render_string": render_string, "user_id": session["user_id"]})
+    if not terminal:
+        return jsonify({"error": "Terminal not found"}), 404
+    command = request.json["command"]
+    terminal_path = f"/tmp/terminals/{render_string}"
+    try:
+        result = subprocess.run(["bash", "-c", f"cd {terminal_path} && {command}"], capture_output=True, text=True)
+        return jsonify({"output": result.stdout + result.stderr})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    os.makedirs('terminals', exist_ok=True)
+if __name__ == "__main__":
     app.run(debug=True)
