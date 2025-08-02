@@ -99,19 +99,32 @@ def terminal_action(render_string):
         # Example: Start a process (e.g., Node.js bot)
         subprocess.run(["bash", "-c", f"cd {terminal_path} && npm install && npm start &"], check=False)
         terminals_collection.update_one({"render_string": render_string}, {"$set": {"status": "running"}})
-        return jsonify({"status": "running"})
+        return jsonify({"status": "running", "message": "Terminal started successfully"})
     elif action == "stop":
         # Example: Stop process (simplified, use actual process management)
         subprocess.run(["pkill", "-f", f"npm start.*{render_string}"], check=False)
         terminals_collection.update_one({"render_string": render_string}, {"$set": {"status": "stopped"}})
-        return jsonify({"status": "stopped"})
+        return jsonify({"status": "stopped", "message": "Terminal stopped successfully"})
     elif action == "kill":
         subprocess.run(["pkill", "-f", f"npm start.*{render_string}"], check=False)
         if os.path.exists(terminal_path):
             subprocess.run(["rm", "-rf", terminal_path])
         terminals_collection.delete_one({"render_string": render_string})
-        return jsonify({"status": "killed"})
+        return jsonify({"status": "killed", "message": "Terminal killed and removed"})
     return jsonify({"error": "Invalid action"}), 400
+
+@app.route("/delete_terminal/<render_string>", methods=["POST"])
+def delete_terminal(render_string):
+    if not is_authenticated():
+        return jsonify({"error": "Unauthorized"}), 401
+    terminal = terminals_collection.find_one({"render_string": render_string, "user_id": session["user_id"]})
+    if not terminal:
+        return jsonify({"error": "Terminal not found"}), 404
+    terminal_path = f"/tmp/terminals/{render_string}"
+    if os.path.exists(terminal_path):
+        subprocess.run(["rm", "-rf", terminal_path])
+    terminals_collection.delete_one({"render_string": render_string})
+    return jsonify({"message": "Terminal deleted successfully"})
 
 @app.route("/execute_command/<render_string>", methods=["POST"])
 def execute_command(render_string):
